@@ -48,7 +48,7 @@ cfg.run_3d_en = [true              true          true];
 
 % ---- Settings shared by all three runs ----------------------------------
 cfg.shared = [];
-cfg.shared.imgs          = [];      % empty: the spreadsheet's array.imgs
+cfg.shared.imgs          = [];      % []: array.imgs; 'sar': every channel in sar.imgs (full array)
 cfg.shared.bin_rng       = 0;
 cfg.shared.line_rng      = -5:5;
 cfg.shared.dbin          = 1;

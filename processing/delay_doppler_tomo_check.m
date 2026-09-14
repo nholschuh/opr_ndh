@@ -44,7 +44,9 @@ for param_idx = 1:length(params)
   frms = frames_param_cmd_frms(mparam,frames);
 
   imgs = cfg.shared.imgs;
-  if isempty(imgs)
+  if ischar(imgs) && strcmpi(imgs,'sar')
+    imgs = mparam.sar.imgs;
+  elseif isempty(imgs)
     imgs = mparam.array.imgs;
   end
 

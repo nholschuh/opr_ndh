@@ -23,7 +23,9 @@ function ctrl_chain = delay_doppler_tomo(params,cfg,param_override)
 %   .sar_out_path, .sar_type: SAR product feeding every output
 %   .dline: [] for each segment's spreadsheet array.dline
 %   .methods, .out_paths, .run_3d_en: the 3D products
-%   .shared: array settings common to all three runs
+%   .shared: array settings common to all three runs. shared.imgs may be
+%     [] for each segment's array.imgs, 'sar' for every channel in its
+%     sar.imgs (the full array as SAR processed), or an explicit cell array
 %   .run_delay_doppler_en, .dd: delay-Doppler switch and settings
 %   .dd_mode: 'local' or 'cluster'
 %   .overwrite_en: allow queuing 3D frames that already exist
@@ -122,7 +124,10 @@ for param_idx = 1:length(params)
   end
 
   imgs = cfg.shared.imgs;
-  if isempty(imgs)
+  if ischar(imgs) && strcmpi(imgs,'sar')
+    % Full array: every channel the SAR step processed
+    imgs = param.sar.imgs;
+  elseif isempty(imgs)
     imgs = param.array.imgs;
   end
 
