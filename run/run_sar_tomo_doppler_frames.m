@@ -30,6 +30,11 @@
 
 [jobs,sar_out_path,sar_type] = tomo_doppler_frames_list();
 
+% Resume partway through the list: every job before this spreadsheet is
+% skipped. Leave empty to run the whole list. The list itself is unchanged,
+% so step 2 still covers every frame.
+start_at_param_fn = 'rds_param_2012_Antarctica_DC8.xlsx';
+
 % array.m uses neighbouring frames' SAR chunks, when they exist, to give the
 % first and last few traces of a frame their full multilook support. With
 % this false only the listed frames are SAR processed and those edge traces
@@ -39,7 +44,7 @@ include_neighbour_frames = false;
 param_override = [];
 param_override.cluster.type = 'slurm';
 % param_override.cluster.type = 'debug';     % run here, for testing one frame
-% param_override.cluster.rerun_only = true;  % only chunks without output
+param_override.cluster.rerun_only = true;    % keep sar_coord.mat and finished chunks
 param_override.cluster.max_jobs_active = 96;
 param_override.cluster.cpu_time_mult  = 2;
 param_override.cluster.mem_mult  = 2;
@@ -59,8 +64,17 @@ else
   param_override = gRadar;
 end
 
+first_job = 1;
+if ~isempty(start_at_param_fn)
+  first_job = find(strcmp({jobs.param_fn},start_at_param_fn),1);
+  if isempty(first_job)
+    error('start_at_param_fn %s is not in tomo_doppler_frames_list.', start_at_param_fn);
+  end
+  fprintf('Starting at job %d of %d: %s\n', first_job, length(jobs), start_at_param_fn);
+end
+
 ctrl_chain = {};
-for job_idx = 1:length(jobs)
+for job_idx = first_job:length(jobs)
   params = read_param_xls(opr_filename_param(jobs(job_idx).param_fn));
   params = select_day_seg_frms(params,jobs(job_idx).day_seg_frms);
 
