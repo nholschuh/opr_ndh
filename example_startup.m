@@ -138,6 +138,10 @@ if ~(~ismcc && isdeployed)
   % opr_ndh: personal OPR functions. Added to the path after opr and
   % run_opr (see the Automated Section) so its functions take precedence.
   profile(pidx).opr_ndh_path                  = '/cresis/users/nholschuh_sta/scripts/opr_ndh';
+  % Personal parameter spreadsheets, searched before param_path by the
+  % opr_ndh copy of opr_filename_param. Only changed spreadsheets need to be
+  % here. May also be a cell array of directories, searched in order.
+  profile(pidx).param_path_ndh                = '/cresis/users/nholschuh_sta/scripts/opr_params_ndh';
 
   profile(pidx).opr_tmp_file_path          = fullfile(profile(pidx).out_path,'opr_tmp'); 
   profile(pidx).cluster.data_location     = fullfile(profile(pidx).tmp_file_path,'cluster');
@@ -583,6 +587,12 @@ if ~(~ismcc && isdeployed)
   gRadar.path_override = profile(cur_profile).path_override;
   % .param_path = parameter spreadsheet folder
   gRadar.param_path = profile(cur_profile).param_path;
+  % .param_path_ndh = personal spreadsheet folder(s) searched first (opr_ndh)
+  if isfield(profile,'param_path_ndh')
+    gRadar.param_path_ndh = profile(cur_profile).param_path_ndh;
+  else
+    gRadar.param_path_ndh = '';
+  end
   % .tmp_path = this is where personal temporary files will be stored (e.g.
   %   the picker should store files here)
   gRadar.tmp_path = profile(cur_profile).tmp_file_path;

@@ -100,7 +100,44 @@ a batch that uses it is built. Set `param_override.cluster.force_compile = 1` if
 
 ---
 
-## 5. Version requirement
+## 5. Personal parameter spreadsheets
+
+`utility/opr_filename_param.m` shadows the toolbox function that turns a spreadsheet name
+into a path, which every run script uses through
+`read_param_xls(opr_filename_param('rds_param_....xlsx'))`. It searches
+`gRadar.param_path_ndh` first and falls back to `gRadar.param_path`, so an edited copy of a
+spreadsheet takes precedence without touching the shared `opr_params` directory.
+
+The startup sets this in the KU profile and copies it into `gRadar`:
+
+```matlab
+profile(pidx).param_path_ndh = '/cresis/users/nholschuh_sta/scripts/opr_params_ndh';
+```
+
+```matlab
+gRadar.param_path_ndh = profile(cur_profile).param_path_ndh;
+```
+
+- **Whole-file override.** A spreadsheet found in the personal directory replaces the
+  default one entirely; rows are not merged. Keep only the spreadsheets you have edited
+  there, and copy the current default before editing so you start from its latest rows.
+- **Several directories.** `param_path_ndh` may be a cell array, searched in order.
+- **Visibility.** The first time a personal spreadsheet is used in a session, MATLAB prints
+  `opr_filename_param: using personal spreadsheet <path>`.
+- **Existing batches.** Cluster tasks carry the parameters that were read when their batch
+  was built. Changing a spreadsheet affects only batches built afterwards.
+- **Not covered.** The `opr_control` season list and `wiki_dataset_pages.m` list
+  `gRadar.param_path` directly, so they still show only the default directory.
+
+Check which copy a name resolves to:
+
+```matlab
+opr_filename_param('rds_param_2018_Antarctica_DC8.xlsx')
+```
+
+---
+
+## 6. Version requirement
 
 The functions here use the current upstream API, which renamed every `ct_filename_*` to
 `opr_filename_*` and `ct_set_params` to `opr_set_params` with no compatibility wrappers. An

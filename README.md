@@ -35,6 +35,7 @@ names still have to be unique across the whole path.
 | `processing/run_delay_doppler_tomo.m` | **Local** run script: delay-Doppler in this session, 3D products through `array` |
 | `processing/run_delay_doppler_tomo_cluster.m` | **Cluster** run script: takes day_seg / day_seg_frame lists and farms out every product |
 | `utility/select_day_seg_frms.m` | Enables exactly the segments and frames named in a `YYYYMMDD_SS` / `YYYYMMDD_SS_FFF` list |
+| `utility/opr_filename_param.m` | Override of the toolbox function: looks for parameter spreadsheets in `gRadar.param_path_ndh` before `gRadar.param_path` |
 | `utility/tomo_set_check.m` | Acceptance checks for one frame of a standard/MVDR/MUSIC 3D set: Nsv, method, shared grids, MVDR covariance support and positivity, MUSIC floor, and trace alignment with 2D products |
 
 **The three 3D products** are three `array` runs on the same SAR data that differ only in
