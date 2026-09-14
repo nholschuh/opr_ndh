@@ -1,5 +1,5 @@
-function delay_doppler(param,param_override)
-% delay_doppler(param,param_override)
+function plan = delay_doppler(param,param_override)
+% plan = delay_doppler(param,param_override)
 %
 % Produces a delay-Doppler product from the raw data for one segment.
 %
@@ -65,11 +65,30 @@ function delay_doppler(param,param_override)
 %     is 'delay_doppler', giving CSARP_delay_doppler.
 %   .block_size: number of output positions to process at a time. Default
 %     is 200. Lower it if the aperture is long and memory is tight.
-%   .dx_out: output along-track spacing in meters. Default is
-%     param.sar.sigma_x*param.array.dline, which is the posted spacing of
-%     the array product.
-%   .Lsar: aperture length in meters. Default is the same expression sar.m
-%     uses, c/fc*(sar.Lsar.agl + sar.Lsar.thick/sqrt(er_ice))/(2*sar.sigma_x).
+%   .grid: how the output positions are chosen. Default is 'sar_coord'.
+%     'sar_coord': read the SAR coordinate file (sar_coord.mat) that the
+%       sar stage wrote, and post on every dline-th SAR output line. This
+%       is exactly the rule array_task.m uses, so every output trace lands
+%       on the same GPS time as the matching CSARP_standard trace. Requires
+%       that sar has been run for the segment.
+%     'records': build the grid from the records trajectory instead. Use
+%       only when no SAR coordinate file exists. Positions will be close to
+%       the standard product but not identical, because sar_coord_task.m
+%       applies the lever arm and a piecewise along-track fit that the raw
+%       records do not have.
+%   .sar_coord_path: opr_filename_out directory holding sar_coord.mat.
+%     Default is param.sar.coord_path, then param.sar.out_path, then 'sar',
+%     which is the same fallback order sar.m uses.
+%   .dline: SAR output lines between posted traces. Default is
+%     param.array.dline, falling back to the same default array.m applies
+%     (half the length of array.line_rng, which is 6 for the default -5:5).
+%   .dx_out: output along-track spacing in meters, used only in 'records'
+%     mode. Default is param.sar.sigma_x*dline. In 'sar_coord' mode the
+%     spacing is fixed by the coordinate file and this is ignored.
+%   .Lsar: aperture length in meters. Default in 'sar_coord' mode is the
+%     Lsar stored in the coordinate file, so the aperture matches what sar
+%     actually focused with. Otherwise it is the expression sar.m uses,
+%     c/fc*(sar.Lsar.agl + sar.Lsar.thick/sqrt(er_ice))/(2*sar.sigma_x).
 %   .dx_dop: uniform along-track sample spacing used inside the aperture,
 %     in meters. Default is the median raw record spacing, so no along-track
 %     bandwidth is discarded. Rounded so that dx_out is an integer multiple.
@@ -94,11 +113,22 @@ function delay_doppler(param,param_override)
 %     opsLoadLayers. Default is the layerdata 'surface' layer.
 %   .trim_nan: logical. Default is true, which drops output positions whose
 %     aperture had no usable data.
+%   .plan_only: logical. Default is false. When true, the geometry is worked
+%     out exactly as for a real run, but no radar data or layers are loaded
+%     and nothing is written. The returned plan is what delay_doppler_batch
+%     uses to size one cluster task per frame.
 %
 % param_override: standard OPR override struct, merged with gRadar
 %
 % OUTPUTS
 % =========================================================================
+% plan: struct describing the work, filled in every mode
+%   .frms: frames that have output positions
+%   .Nx, .Nrec_frame, .Nrec_block: per frame, output traces, raw records
+%     under the frame's apertures, and raw records in its largest block
+%   .Nt, .Nch, .Nimg, .Ndop, .Nwin, .Nfft, .Lsar, .dx_dop, .dx_out,
+%     .block_size, .complex_en: segment-wide sizes and geometry
+%
 % One file per frame per image, written to CSARP_delay_doppler:
 %   Data_YYYYMMDD_SS_FFF.mat            (single image)
 %   Data_img_II_YYYYMMDD_SS_FFF.mat     (multiple images)
@@ -117,6 +147,11 @@ function delay_doppler(param,param_override)
 %   .fx: Ndop by 1, along-track spatial frequency in cycles/m.
 %   .Lsar, .dx_dop, .dx_out, .Nfft, .Nwin: geometry actually used.
 %   .Nsamples: 1 by Nx, usable raw traces in each output aperture.
+%
+% Along_track holds each trace's along-track position in meters on the SAR
+% grid origin. GPS_time, Roll, Pitch, and Heading come straight from the
+% SAR coordinate file in 'sar_coord' mode, and Latitude, Longitude, and
+% Elevation from its phase-centre origin.
 %
 % Data: Nt by Nx, the maximum over the Doppler dimension, matching the
 %   convention that array_proc uses for its beamformer output.
@@ -183,6 +218,9 @@ end
 if ~isfield(dd,'trim_nan') || isempty(dd.trim_nan)
   dd.trim_nan = true;
 end
+if ~isfield(dd,'plan_only') || isempty(dd.plan_only)
+  dd.plan_only = false;
+end
 if ~isfield(dd,'surf_layer') || isempty(dd.surf_layer)
   dd.surf_layer = struct('name','surface','source','layerdata','existence_check',false);
 end
@@ -200,12 +238,37 @@ if ~isfield(param.sar.Lsar,'thick') || isempty(param.sar.Lsar.thick)
   param.sar.Lsar.thick = 1000;
 end
 
-array_dline = 1;
-if isfield(param,'array') && isfield(param.array,'dline') && ~isempty(param.array.dline)
-  array_dline = param.array.dline;
+if ~isfield(dd,'grid') || isempty(dd.grid)
+  dd.grid = 'sar_coord';
+end
+if ~any(strcmpi(dd.grid,{'sar_coord','records'}))
+  error('param.delay_doppler.grid must be ''sar_coord'' or ''records'', not ''%s''.', dd.grid);
+end
+
+if ~isfield(dd,'sar_coord_path') || isempty(dd.sar_coord_path)
+  if isfield(param.sar,'coord_path') && ~isempty(param.sar.coord_path)
+    dd.sar_coord_path = param.sar.coord_path;
+  elseif isfield(param.sar,'out_path') && ~isempty(param.sar.out_path)
+    dd.sar_coord_path = param.sar.out_path;
+  else
+    dd.sar_coord_path = 'sar';
+  end
+end
+
+if ~isfield(dd,'dline') || isempty(dd.dline)
+  if isfield(param,'array') && isfield(param.array,'dline') && ~isempty(param.array.dline)
+    dd.dline = param.array.dline;
+  else
+    % Same default as array.m: half the length of the symmetric line_rng
+    line_rng = -5:5;
+    if isfield(param,'array') && isfield(param.array,'line_rng') && ~isempty(param.array.line_rng)
+      line_rng = param.array.line_rng;
+    end
+    dd.dline = round(length(-max(line_rng):max(line_rng))/2);
+  end
 end
 if ~isfield(dd,'dx_out') || isempty(dd.dx_out)
-  dd.dx_out = param.sar.sigma_x * array_dline;
+  dd.dx_out = param.sar.sigma_x * dd.dline;
 end
 
 param.delay_doppler = dd;
@@ -220,17 +283,58 @@ fprintf('=====================================================================\n
 % along-track, so that frames abut seamlessly. This is the same convention
 % sar_task.m uses for its output_along_track.
 records_all = records_load(param,'lat','lon','elev','gps_time','roll','pitch','heading');
-along_track_all = geodetic_to_along_track(records_all.lat,records_all.lon,records_all.elev);
-along_track_all = along_track_all(:).';
 
-out_x_all = 0 : dd.dx_out : along_track_all(end);
+sar_coord = [];
+if strcmpi(dd.grid,'sar_coord')
+  sar_coord_fn = fullfile(opr_filename_out(param,dd.sar_coord_path,''),'sar_coord.mat');
+  if ~exist(sar_coord_fn,'file')
+    error(['No SAR coordinate file at %s. Run sar for this segment with the ' ...
+      'same out_path first, or set param.delay_doppler.grid = ''records'' to ' ...
+      'post on an approximate grid instead.'], sar_coord_fn);
+  end
+  sar_coord = load(sar_coord_fn,'along_track','gps_time','roll','pitch', ...
+    'heading','origin','sigma_x','presums','Lsar');
+
+  % sar_coord.along_track is per presummed record. Carry it onto the raw
+  % records through GPS time, since data_load works in raw record numbers.
+  % Presum the record times exactly the way sar_coord_task.m presums the
+  % records, so the two vectors line up index for index
+  if sar_coord.presums > 1
+    gps_time_ps = fir_dec(records_all.gps_time,sar_coord.presums);
+  else
+    gps_time_ps = records_all.gps_time;
+  end
+  if length(sar_coord.along_track) ~= length(gps_time_ps)
+    error(['sar_coord.mat has %d records but the records file gives %d ' ...
+      'after presumming by %d. The records file has changed since sar was run.'], ...
+      length(sar_coord.along_track), length(gps_time_ps), sar_coord.presums);
+  end
+  along_track_all = interp1(gps_time_ps(:).',sar_coord.along_track(:).', ...
+    records_all.gps_time,'linear','extrap');
+
+  % array_task.m keeps SAR output line k when mod(k-1,dline) == 0, and SAR
+  % output line k sits at (k-1)*sigma_x
+  out_line_all = 1 : dd.dline : length(sar_coord.gps_time);
+  out_x_all = (out_line_all-1) * sar_coord.sigma_x;
+  dd.dx_out = sar_coord.sigma_x * dd.dline;
+else
+  along_track_all = geodetic_to_along_track(records_all.lat,records_all.lon,records_all.elev);
+  out_line_all = [];
+  out_x_all = 0 : dd.dx_out : along_track_all(end);
+end
+along_track_all = along_track_all(:).';
 
 frames = frames_load(param);
 param.cmd.frms = frames_param_cmd_frms(param,frames);
 
 %% Surface layer
 % =========================================================================
-surf_layer = opsLoadLayers(param,dd.surf_layer);
+if dd.plan_only
+  % Planning never loads radar data, so it does not need the layers
+  surf_layer = struct('gps_time',[],'twtt',[]);
+else
+  surf_layer = opsLoadLayers(param,dd.surf_layer);
+end
 if isempty(surf_layer.gps_time) || all(~isfinite(surf_layer.gps_time))
   surface_all = zeros(size(records_all.gps_time));
 elseif length(surf_layer.gps_time) == 1
@@ -256,12 +360,20 @@ lambda = c/fc;
 %% Aperture and Doppler grid
 % =========================================================================
 if ~isfield(dd,'Lsar') || isempty(dd.Lsar)
-  % Same expression as sar.m line 275
-  dd.Lsar = c/fc*(param.sar.Lsar.agl + param.sar.Lsar.thick/sqrt(er_ice))/(2*param.sar.sigma_x);
+  if ~isempty(sar_coord) && isfield(sar_coord,'Lsar') && ~isempty(sar_coord.Lsar)
+    % The aperture sar actually focused with
+    dd.Lsar = sar_coord.Lsar;
+  else
+    % Same expression as sar.m line 275
+    dd.Lsar = c/fc*(param.sar.Lsar.agl + param.sar.Lsar.thick/sqrt(er_ice))/(2*param.sar.sigma_x);
+  end
 end
 
 if ~isfield(dd,'dx_dop') || isempty(dd.dx_dop)
-  dd.dx_dop = median(diff(along_track_all));
+  % Only moving records count, or long stationary stretches in ground data
+  % drag the median to zero
+  dx_all = diff(along_track_all);
+  dd.dx_dop = median(dx_all(dx_all > 0));
 end
 % Force dx_out to be an integer multiple of dx_dop so that every output
 % position lands exactly on the uniform grid and no interpolation of the
@@ -307,6 +419,7 @@ Ndop = length(dop_keep);
 
 st_win = window_from_handle(dd.st_wind,Nwin);
 
+fprintf('  grid %s, dline %d\n', dd.grid, dd.dline);
 fprintf('  fc %.1f MHz, lambda %.4f m\n', fc/1e6, lambda);
 fprintf('  Lsar %.1f m, dx_out %.3f m, dx_dop %.4f m\n', dd.Lsar, dd.dx_out, dd.dx_dop);
 fprintf('  aperture %d samples, Nfft %d, keeping %d Doppler bins\n', Nwin, Nfft, Ndop);
@@ -314,6 +427,42 @@ fprintf('  theta span kept %.2f to %.2f deg (mappable limit %.2f deg)\n', ...
   min(theta(dop_keep)), max(theta(dop_keep)), max(theta(mappable)));
 
 param.delay_doppler = dd;
+
+%% Work plan
+% =========================================================================
+% Sizes used by delay_doppler_batch to request memory and time for each
+% frame's cluster task
+Nt_est = 0;
+Nch = 0;
+for img = 1:length(dd.imgs)
+  wf = abs(dd.imgs{img}(1,1));
+  if isfield(wfs,'Nt_raw') && ~isempty(wfs(wf).Nt_raw)
+    Nt_est = max(Nt_est,wfs(wf).Nt_raw);
+  else
+    Nt_est = max(Nt_est,numel(wfs(wf).time));
+  end
+  Nch = max(Nch,size(dd.imgs{img},1));
+end
+dx_raw_all = diff(along_track_all);
+dx_raw = median(dx_raw_all(dx_raw_all > 0));
+
+plan = [];
+plan.day_seg    = param.day_seg;
+plan.frms       = [];
+plan.Nx         = [];
+plan.Nrec_frame = [];
+plan.Nrec_block = [];
+plan.Nt         = Nt_est;
+plan.Nch        = Nch;
+plan.Nimg       = length(dd.imgs);
+plan.Ndop       = Ndop;
+plan.Nwin       = Nwin;
+plan.Nfft       = Nfft;
+plan.Lsar       = dd.Lsar;
+plan.dx_dop     = dd.dx_dop;
+plan.dx_out     = dd.dx_out;
+plan.block_size = dd.block_size;
+plan.complex_en = dd.complex_en;
 
 %% Frame loop
 % =========================================================================
@@ -330,7 +479,19 @@ for frm_idx = 1:length(param.cmd.frms)
   % Output positions belonging to this frame. The upper bound is exclusive
   % so that neighbouring frames do not both claim the same position, except
   % at the end of the segment where there is no next frame to take it.
-  if frm == length(frames.frame_idxs)
+  if ~isempty(sar_coord)
+    % sar.m bounds each frame by these presummed records, and sar_task.m
+    % keeps output lines inclusive at both ends of that span
+    ps = sar_coord.presums;
+    start_rec = ceil(frames.frame_idxs(frm)/ps);
+    if frm < length(frames.frame_idxs)
+      stop_rec = ceil((frames.frame_idxs(frm+1)-1)/ps);
+    else
+      stop_rec = length(sar_coord.along_track);
+    end
+    out_idxs = find(out_x_all >= sar_coord.along_track(start_rec) ...
+      & out_x_all <= sar_coord.along_track(stop_rec));
+  elseif frm == length(frames.frame_idxs)
     out_idxs = find(out_x_all >= along_track_all(recs_frm(1)) ...
       & out_x_all <= along_track_all(recs_frm(2)));
   else
@@ -343,6 +504,15 @@ for frm_idx = 1:length(param.cmd.frms)
   end
   out_x = out_x_all(out_idxs);
   Nx = length(out_x);
+
+  plan.frms(end+1) = frm;
+  plan.Nx(end+1) = Nx;
+  plan.Nrec_frame(end+1) = sum(along_track_all >= out_x(1)-dd.Lsar/2 ...
+    & along_track_all <= out_x(end)+dd.Lsar/2);
+  plan.Nrec_block(end+1) = ceil(((min(dd.block_size,Nx)-1)*dd.dx_out + dd.Lsar)/dx_raw);
+  if dd.plan_only
+    continue;
+  end
 
   fprintf('\n  Frame %03d: records %d to %d, %d output positions\n', ...
     frm, recs_frm(1), recs_frm(2), Nx);
@@ -456,14 +626,30 @@ for frm_idx = 1:length(param.cmd.frms)
 
   %% Output trajectory on the posted grid
   % =======================================================================
-  GPS_time  = interp1(along_track_all,records_all.gps_time,out_x);
-  Latitude  = interp1(along_track_all,records_all.lat,out_x);
-  Longitude = interp1(along_track_all,records_all.lon,out_x);
-  Elevation = interp1(along_track_all,records_all.elev,out_x);
-  Roll      = interp1(along_track_all,records_all.roll,out_x);
-  Pitch     = interp1(along_track_all,records_all.pitch,out_x);
-  Heading   = interp1(along_track_all,records_all.heading,out_x);
-  Surface   = interp1(along_track_all,surface_all,out_x);
+  if ~isempty(sar_coord)
+    % Straight from the SAR coordinate file, which is where array_task.m
+    % gets the trajectory of every standard product trace
+    out_lines = out_line_all(out_idxs);
+    GPS_time  = sar_coord.gps_time(1,out_lines);
+    Roll      = sar_coord.roll(1,out_lines);
+    Pitch     = sar_coord.pitch(1,out_lines);
+    Heading   = sar_coord.heading(1,out_lines);
+    physical_constants('WGS84');
+    [Latitude,Longitude,Elevation] = ecef2geodetic(sar_coord.origin(1,out_lines), ...
+      sar_coord.origin(2,out_lines),sar_coord.origin(3,out_lines),WGS84.ellipsoid);
+    Latitude  = Latitude*180/pi;
+    Longitude = Longitude*180/pi;
+    Surface   = interp1(records_all.gps_time,surface_all,GPS_time,'linear','extrap');
+  else
+    GPS_time  = interp1(along_track_all,records_all.gps_time,out_x);
+    Latitude  = interp1(along_track_all,records_all.lat,out_x);
+    Longitude = interp1(along_track_all,records_all.lon,out_x);
+    Elevation = interp1(along_track_all,records_all.elev,out_x);
+    Roll      = interp1(along_track_all,records_all.roll,out_x);
+    Pitch     = interp1(along_track_all,records_all.pitch,out_x);
+    Heading   = interp1(along_track_all,records_all.heading,out_x);
+    Surface   = interp1(along_track_all,surface_all,out_x);
+  end
   Along_track = out_x;
 
   keep = true(1,Nx);
@@ -534,7 +720,11 @@ for frm_idx = 1:length(param.cmd.frms)
     param_delay_doppler = param;
     param_records = records_all_param(param);
     file_type = 'delay_doppler';
-    file_version = '1';
+    if isfield(param,'opr_file_lock') && ~isempty(param.opr_file_lock) && param.opr_file_lock
+      file_version = '1L';
+    else
+      file_version = '1';
+    end
 
     fprintf('  Save %s\n', out_fn);
     opr_save(out_fn,'Doppler','Data','Theta','Time','GPS_time', ...
