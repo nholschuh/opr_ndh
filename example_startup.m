@@ -544,6 +544,9 @@ if ~(~ismcc && isdeployed)
   gRadar.cluster.hidden_depend_funs{end+1} = {'sar_task.m' 2};
   gRadar.cluster.hidden_depend_funs{end+1} = {'array_task.m' 2};
   gRadar.cluster.hidden_depend_funs{end+1} = {'array_combine_task.m' 2};
+  % opr_ndh: without this, a compile triggered by any other stage (e.g. sar)
+  % produces a job binary that lacks the delay-Doppler task
+  gRadar.cluster.hidden_depend_funs{end+1} = {'delay_doppler_task.m' 2};
   gRadar.cluster.hidden_depend_funs{end+1} = {'nsidc_delivery_script_task.m' 2};
   gRadar.cluster.hidden_depend_funs{end+1} = {'preprocess_task.m' 2};
   gRadar.cluster.hidden_depend_funs{end+1} = {'layer_tracker_task.m' 2};

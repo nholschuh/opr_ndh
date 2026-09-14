@@ -89,6 +89,25 @@ products = struct('method',cfg.methods(logical(cfg.run_3d_en)), ...
   'out_path',cfg.out_paths(logical(cfg.run_3d_en)));
 run_mvdr = any(strcmpi({products.method},'mvdr'));
 
+%% Compile the job binary once, up front
+% A batch only recompiles the shared binary when one of its dependencies is
+% newer than the binary. A binary compiled earlier without
+% delay_doppler_task (for example by a sar run after pulling opr_ndh) is
+% therefore reused as-is, and every delay-Doppler task fails with
+% "Undefined function 'delay_doppler_task'". One forced compile here, with
+% the task in the list, prevents that; the batches built below then find
+% the binary up to date and do not compile again.
+cluster_type = '';
+if isfield(param_override.cluster,'type') && ~isempty(param_override.cluster.type)
+  cluster_type = param_override.cluster.type;
+end
+if strcmpi(cfg.dd_mode,'cluster') && cfg.run_delay_doppler_en ...
+    && any(strcmpi(cluster_type,{'slurm','torque'}))
+  fprintf('Compiling the cluster job binary with delay_doppler_task included (%s)\n', datestr(now));
+  cluster_compile({'delay_doppler_task.m','array_task.m','array_combine_task.m'}, ...
+    param_override.cluster.hidden_depend_funs,1,struct('cluster',param_override.cluster));
+end
+
 ctrl_chain = {};
 
 for param_idx = 1:length(params)

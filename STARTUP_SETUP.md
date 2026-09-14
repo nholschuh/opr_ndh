@@ -88,10 +88,18 @@ names. Whichever batch compiles last decides what the binary contains. A task fu
 exists only in `opr_ndh` must therefore be in `hidden_depend_funs`, or a later array batch
 can recompile without it.
 
-- `delay_doppler_tomo` adds `delay_doppler_task.m` to that list automatically, so both run
-  scripts are covered.
-- If you call `delay_doppler_batch` yourself, add `{'delay_doppler_task.m' 2}` to
-  `param_override.cluster.hidden_depend_funs`, or permanently to the list in your startup.
+- The KU startup lists `delay_doppler_task.m` in `hidden_depend_funs`, so every compile
+  includes it, including one triggered by `sar`.
+- Being on the list is not enough on its own. A batch only recompiles when a dependency is
+  newer than the binary, so a binary built before the task was listed is reused, and every
+  delay-Doppler task fails with `Undefined function 'delay_doppler_task'`. For that reason
+  `delay_doppler_tomo` forces one compile, with the task included, before it builds slurm or
+  torque batches.
+- If you call `delay_doppler_batch` yourself, force the compile first:
+
+  ```matlab
+  cluster_compile({'delay_doppler_task.m','array_task.m','array_combine_task.m'},[],1)
+  ```
 
 **Recompiling after edits.** With the default `force_compile = 0`, a batch recompiles when
 any file its functions depend on is newer than the binary. That dependency search also

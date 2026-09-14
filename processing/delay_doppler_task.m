@@ -6,10 +6,12 @@ function success = delay_doppler_task(param)
 % task. param arrives already merged with gRadar, so nothing further is
 % overridden here.
 %
-% Must be compiled into the cluster job binary. delay_doppler_tomo adds it
-% to param.cluster.hidden_depend_funs automatically; if delay_doppler_batch
-% is called some other way, add {'delay_doppler_task.m' 2} to that list, or
-% a later batch that recompiles the shared binary will drop it.
+% Must be compiled into the cluster job binary. The KU startup lists it in
+% gRadar.cluster.hidden_depend_funs, and delay_doppler_tomo forces one
+% compile with it included before building slurm or torque batches. If
+% delay_doppler_batch is called some other way on a binary compiled without
+% it, force a compile first:
+%   cluster_compile({'delay_doppler_task.m','array_task.m','array_combine_task.m'},[],1)
 %
 % Author: Nick Holschuh
 %
