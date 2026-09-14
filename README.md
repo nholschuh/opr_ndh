@@ -21,12 +21,28 @@ names still have to be unique across the whole path.
 
 ## Contents
 
-| Function | Purpose |
+| File | Purpose |
 |---|---|
+| `example_startup.m` | KU startup file, with `opr_ndh` added to the path last so its functions take precedence (see `STARTUP_SETUP.md`) |
 | `processing/along_track_sampling.m` | Along-track trace spacing and record rate of the raw data for one segment, measured from the records file |
-| `processing/run_along_track_sampling.m` | Driver that runs the above over whole seasons and writes a summary table |
-| `processing/delay_doppler.m` | Delay-Doppler product from the full raw data, posted on the array product's along-track grid, with a `Doppler` struct laid out like `Tomo` |
-| `processing/run_delay_doppler.m` | User-editable template for the above |
+| `processing/run_along_track_sampling.m` | Runs the above over whole seasons and writes a summary table |
+| `processing/delay_doppler.m` | Delay-Doppler product from the full raw data, posted on the CSARP_standard traces (read from the SAR stage's `sar_coord.mat`), with a `Doppler` struct laid out like `Tomo`; `plan_only` mode sizes the work without loading data |
+| `processing/run_delay_doppler.m` | Template for running the above on its own |
+| `processing/delay_doppler_task.m` | Cluster task: the delay-Doppler product for one frame |
+| `processing/delay_doppler_batch.m` | Builds a cluster batch with one delay-Doppler task per frame, sized from the plan |
+| `processing/delay_doppler_tomo.m` | Shared engine: delay-Doppler product plus the three 3D array products on identical settings and traces |
+| `processing/delay_doppler_tomo_check.m` | Runs the acceptance checks on every listed frame |
+| `processing/run_delay_doppler_tomo.m` | **Local** run script: delay-Doppler in this session, 3D products through `array` |
+| `processing/run_delay_doppler_tomo_cluster.m` | **Cluster** run script: takes day_seg / day_seg_frame lists and farms out every product |
+| `utility/select_day_seg_frms.m` | Enables exactly the segments and frames named in a `YYYYMMDD_SS` / `YYYYMMDD_SS_FFF` list |
+| `utility/tomo_set_check.m` | Acceptance checks for one frame of a standard/MVDR/MUSIC 3D set: Nsv, method, shared grids, MVDR covariance support and positivity, MUSIC floor, and trace alignment with 2D products |
+
+**The three 3D products** are three `array` runs on the same SAR data that differ only in
+`method` and `out_path`, each keeping its look-direction axis in `Tomo.img`. Default
+directories are `standard3D_ndh`, `mvdr3D_ndh` and `music3D_ndh`. Never give one a bare
+method name as its `out_path`, or it overwrites the posted 2D product of that name. MVDR
+also needs `param.array.DCM` set wide enough for its covariance to invert; the run script
+refuses to start otherwise.
 
 Run `along_track_sampling` on a season before `delay_doppler`. It reports the raw
 along-track spacing, which sets how much angle span the delay-Doppler product can reach:
@@ -44,7 +60,8 @@ The radar data does not live on the development machine. Write and commit here, 
 the data machine:
 
 ```bash
-cd <base_dir>
 git clone git@github.com:nholschuh/opr_ndh.git
 git -C opr_ndh pull      # on every subsequent visit
 ```
+
+Then point the startup at it as described in `STARTUP_SETUP.md`.

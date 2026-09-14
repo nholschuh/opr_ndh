@@ -1,77 +1,53 @@
 # Making `opr_ndh` visible to the OPR toolbox
 
-Done once per computer. It changes only your own startup script. Nothing tracked by the
-`opr` clone is touched, so `git pull` there stays clean.
-
-`base_dir` below is the directory your startup script already uses to find `opr`,
-`opr_params`, and `run_opr`. On the Amherst workstation that is
-`/mnt/NDH_data/Google_Drive2/Research_Projects/00_CresisData`, and `opr_ndh` sits beside
-`opr` inside it.
+`example_startup.m` in this repository is the startup file used on the KU machines. It puts
+`opr_ndh` on the MATLAB path so that any function in `opr_ndh` takes precedence over a
+toolbox function of the same name, in `opr` or in `run_opr`. Nothing tracked by the `opr`
+clone is touched, so `git pull` there stays clean.
 
 ---
 
-## 1. Repoint `path_override` at `opr_ndh`
+## 1. How the startup does it
 
-OPR already has the hook. In `opr/matlab/example_startup.m` the personal directory is
-added to the MATLAB path *after* the toolbox directories, and `addpath` prepends, so a
-function in the personal directory shadows a toolbox function of the same name. The
-comment at line 397 says exactly this.
+Two additions, both marked `Added by NDH: opr_ndh`:
 
-In every profile block of your startup script, change:
+- **In the KU Linux profile (profile 3)**, a field giving the repository location:
 
-```matlab
-profile(pidx).path_override             = fullfile(base_dir,'run_opr');
+  ```matlab
+  profile(pidx).opr_ndh_path = '/cresis/users/nholschuh_sta/scripts/opr_ndh';
+  ```
+
+- **In the Automated Section**, a block that adds `opr_ndh` and its subdirectories, placed
+  *after* the blocks that add the OPR toolbox and `path_override` (`run_opr`). It skips
+  `.git`, class (`@`) and package (`+`) directories, as the toolbox blocks do.
+
+The order matters because `addpath` puts each directory at the **front** of the path, so the
+directory added last wins. Adding `opr_ndh` last gives this resolution order:
+
+```
+1  opr_ndh
+2  run_opr     (path_override)
+3  opr/matlab
 ```
 
-to:
-
-```matlab
-profile(pidx).path_override             = fullfile(base_dir,'opr_ndh');
-profile(pidx).path_run_opr              = fullfile(base_dir,'run_opr');
-```
-
-Leave `profile(pidx).path` alone. It points at `<base_dir>/opr/matlab`, so nothing in
-`opr_ndh` is picked up twice and there is no ambiguity about which copy of a function wins.
-
-`gRadar.path_override` must stay a single directory string. Two toolbox functions,
-`radiometric_calibration.m` and `slope_tracker.m`, call `get_filenames` on it directly and
-would break on a cell array.
+`path_override` still points at `run_opr` and is otherwise unchanged. Profiles without an
+`opr_ndh_path` field skip the block.
 
 ---
 
-## 2. Keep `run_opr` on the path
+## 2. Using it on another machine or profile
 
-Step 1 takes `run_opr` out of the `path_override` slot, so it needs its own block. Paste
-this into the "Startup code (Automated Section)" of your startup script, immediately
-**before** the `if ~exist(profile(cur_profile).path_override,'dir')` block. Order matters:
-`run_opr` goes on first so that `opr_ndh` still wins over everything.
+1. Clone the repository wherever you keep your scripts:
 
-```matlab
-  if isfield(profile,'path_run_opr') && ~isempty(profile(cur_profile).path_run_opr) ...
-      && exist(profile(cur_profile).path_run_opr,'dir')
-    fprintf('  Adding run_opr path: %s\n',profile(cur_profile).path_run_opr);
-    fns = get_filenames(profile(cur_profile).path_run_opr,'','','',struct('type','d','recursive',1));
-    addpath(profile(cur_profile).path_run_opr);
-    AdditionalPaths{end+1} = profile(cur_profile).path_run_opr;
-    for fn_idx = 1:length(fns)
-      [fn_dir fn_name] = fileparts(fns{fn_idx});
-      if ~isempty(fn_name) && fn_name(1) ~= '@' && fn_name(1) ~= '+' ...
-          && isempty(strfind(fns{fn_idx},'.svn')) && isempty(strfind(fns{fn_idx},'.git'))
-        addpath(fns{fn_idx});
-        AdditionalPaths{end+1} = fns{fn_idx};
-      end
-    end
-  end
-```
+   ```bash
+   git clone git@github.com:nholschuh/opr_ndh.git
+   ```
 
-This is the existing personal-path block with the variable name swapped. The `.git` test on
-the last condition is why `opr_ndh/.git` never lands on the MATLAB path.
+2. Either copy `example_startup.m` to the folder returned by MATLAB's `userpath`, renamed to
+   `startup.m`, or copy the two marked additions into your existing startup.
+3. Set `opr_ndh_path` in the profile that machine uses.
 
-If you would rather not edit the automated section, the alternative is to leave
-`path_override` pointing at `run_opr` and append a bare
-`addpath(genpath('<base_dir>/opr_ndh'))` at the very end of the startup script. That works
-for the MATLAB path, but `gRadar.path_override` then points at the wrong directory and
-compiled cluster jobs will not substitute your overrides. Prefer the block above.
+After that, `git pull` inside `opr_ndh` is the only thing needed to pick up new functions.
 
 ---
 
@@ -80,60 +56,54 @@ compiled cluster jobs will not substitute your overrides. Prefer the block above
 Restart MATLAB, then:
 
 ```matlab
-global gRadar; gRadar.path_override    % should print .../opr_ndh
-which -all along_track_sampling        % should find the opr_ndh copy
+which -all delay_doppler
 ```
 
-For any function that deliberately shadows a toolbox function, `which -all <name>` should
-list the `opr_ndh` copy **first** and the `opr/matlab` copy second. If the order is
-reversed, the `run_opr` block from step 2 was pasted after the `path_override` block
-instead of before it.
+The `opr_ndh` copy should be listed first. For a function that deliberately shadows a
+toolbox function, `which -all <name>` should list `opr_ndh`, then `run_opr` if present, then
+`opr/matlab`.
 
 ---
 
-## 4. Compiled cluster jobs
+## 4. Cluster jobs
 
-Relevant only if you run with `cluster.type` set to `torque` or `slurm` and MCC
-compilation enabled. Two cases, and they behave differently:
+Each cluster type builds its path differently. All three end up with the startup's order,
+provided the startup is the one in `userpath` on the machine that submits the jobs.
 
-- **A function that overrides an existing toolbox function.** Handled automatically. The
-  scheduler substitutes the `path_override` copy when it builds the dependency list.
-- **A brand-new function that exists nowhere upstream.** *Not* included automatically. The
-  comment at `example_startup.m:471` spells this out: only files that also exist in
-  `.path` get overwritten in the dependency list.
+- **`debug`** runs every task in your MATLAB session, on the path you already have.
+- **`matlab`** creates jobs with `createJob(parcluster)` and does not turn on
+  `AutoAddClientPath` (`cluster_submit_job.m`), so workers do not inherit your session's
+  path. Instead each worker runs the `startup.m` in `userpath` itself, and so builds the
+  same order. This was confirmed with the local profile on the Amherst workstation (R2021a).
+  If the startup is not in `userpath`, workers will see neither `opr` nor `opr_ndh`.
+- **`slurm` and `torque`** run a binary compiled with `mcc`. The startup's opening guard,
+  `if ~(~ismcc && isdeployed)`, runs the path setup while `mcc` is compiling and skips it
+  only inside the finished binary. `mcc` therefore resolves every function through the same
+  order and compiles the `opr_ndh` copy of anything shadowed. This follows from the code
+  and has not been run on a KU node from here.
 
-For the second case, add an entry to the `hidden_depend_funs` list in your startup script,
-alongside the existing `qlook_task.m` and `array_task.m` entries:
+**New task functions.** All batches compile into one shared binary in `opr/matlab/cluster`,
+and each compile includes only `cluster.hidden_depend_funs` plus the functions that batch
+names. Whichever batch compiles last decides what the binary contains. A task function that
+exists only in `opr_ndh` must therefore be in `hidden_depend_funs`, or a later array batch
+can recompile without it.
 
-```matlab
-  gRadar.cluster.hidden_depend_funs{end+1} = {'delay_doppler_task.m' 2};
-```
+- `delay_doppler_tomo` adds `delay_doppler_task.m` to that list automatically, so both run
+  scripts are covered.
+- If you call `delay_doppler_batch` yourself, add `{'delay_doppler_task.m' 2}` to
+  `param_override.cluster.hidden_depend_funs`, or permanently to the list in your startup.
 
-The second element is the date-check level: `2` means check this file and its dependencies
-only when `fun` is not passed to `cluster_compile`. Re-run `cluster_compile` after any
-change to that list.
+**Recompiling after edits.** With the default `force_compile = 0`, a batch recompiles when
+any file its functions depend on is newer than the binary. That dependency search also
+resolves through the path, so editing an `opr_ndh` file triggers a recompile the next time
+a batch that uses it is built. Set `param_override.cluster.force_compile = 1` if in doubt.
 
 ---
 
 ## 5. Version requirement
 
-The functions here are written against the current upstream API, which renamed every
-`ct_filename_*` to `opr_filename_*` and `ct_set_params` to `opr_set_params`. Upstream kept
-no compatibility wrappers. An `opr` clone older than that rename will fail with undefined
-function errors.
-
-The Amherst workstation clone is at `03ee905c` (September 2024), which is **319 commits
-behind** and predates the rename, so nothing here will run against it until it is pulled.
-The `run_opr` clone on that machine is from July 2025 and already uses the new names.
-
----
-
-## 6. Setting up a new computer
-
-```bash
-cd <base_dir>
-git clone git@github.com:nholschuh/opr_ndh.git
-```
-
-Then steps 1 and 2 on that machine's startup script. From then on, `git pull` inside
-`opr_ndh` is the only thing needed to pick up new functions.
+The functions here use the current upstream API, which renamed every `ct_filename_*` to
+`opr_filename_*` and `ct_set_params` to `opr_set_params` with no compatibility wrappers. An
+`opr` clone older than that rename fails with undefined function errors. The Amherst
+workstation clone (`03ee905c`, September 2024) predates the rename and was 319 commits
+behind when last checked.
