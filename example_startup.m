@@ -135,6 +135,9 @@ if ~(~ismcc && isdeployed)
   profile(pidx).gis_path                  = fullfile(base_dir,'GIS_data');
 
   profile(pidx).personal_path                 = '/kucresis/scratch/nholschuh_sta/scripts/NDH_MatlabTools';
+  % opr_ndh: personal OPR functions. Added to the path after opr and
+  % run_opr (see the Automated Section) so its functions take precedence.
+  profile(pidx).opr_ndh_path                  = '/cresis/users/nholschuh_sta/scripts/opr_ndh';
 
   profile(pidx).opr_tmp_file_path          = fullfile(profile(pidx).out_path,'opr_tmp'); 
   profile(pidx).cluster.data_location     = fullfile(profile(pidx).tmp_file_path,'cluster');
@@ -479,6 +482,33 @@ if ~(~ismcc && isdeployed)
       end
     end
   end
+  %%%%%%%%%%%%%% Added by NDH: opr_ndh
+  % addpath puts each directory at the FRONT of the path, so whatever is
+  % added last wins. opr_ndh is added here, after the OPR toolbox and
+  % path_override (run_opr), so any function in opr_ndh shadows a toolbox
+  % function of the same name. cluster_compile runs mcc on this same path,
+  % so compiled cluster jobs pick up the opr_ndh copies too.
+  if isfield(profile,'opr_ndh_path') && ~isempty(profile(cur_profile).opr_ndh_path)
+    if ~exist(profile(cur_profile).opr_ndh_path,'dir')
+      fprintf('opr_ndh not found: %s\n', profile(cur_profile).opr_ndh_path);
+    else
+      fprintf('  Adding opr_ndh path: %s\n',profile(cur_profile).opr_ndh_path);
+      fns = get_filenames(profile(cur_profile).opr_ndh_path,'','','',struct('type','d','recursive',1));
+      addpath(profile(cur_profile).opr_ndh_path);
+      AdditionalPaths{end+1} = profile(cur_profile).opr_ndh_path;
+      for fn_idx = 1:length(fns)
+        [fn_dir fn_name] = fileparts(fns{fn_idx});
+        if ~isempty(fn_name) && fn_name(1) ~= '@' && fn_name(1) ~= '+' ...
+            && isempty(strfind(fns{fn_idx},'.svn')) && isempty(strfind(fns{fn_idx},'.git'))
+          % Ignore .git directories and Matlab class and package directories
+          addpath(fns{fn_idx});
+          AdditionalPaths{end+1} = fns{fn_idx};
+        end
+      end
+    end
+  end
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%
+
   fprintf('  Setting global preferences in global variable gRadar\n');
   global gRadar;
   
