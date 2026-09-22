@@ -131,7 +131,8 @@ tomo_collate.imgs = {1,2};
 % .img_comb: [min time to begin combine, min time after surface, time at the end
 %   of the preceding waveform not to use] -- the spreadsheet's array.img_comb,
 %   so the 3D fuse matches the 2D standard product
-tomo_collate.img_comb = params(find([params.cmd.generic],1)).array.img_comb;
+first_idx = find(arrayfun(@opr_generic_en,params),1);
+tomo_collate.img_comb = params(first_idx).array.img_comb;
 tomo_collate.fuse_columns = {[],[]};
 
 % .sv_cal_fn: steering-vector calibration (none)
