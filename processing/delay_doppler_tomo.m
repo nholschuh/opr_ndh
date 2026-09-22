@@ -29,6 +29,9 @@ function ctrl_chain = delay_doppler_tomo(params,cfg,param_override)
 %   .run_delay_doppler_en, .dd: delay-Doppler switch and settings
 %   .dd_mode: 'local' or 'cluster'
 %   .overwrite_en: allow queuing 3D frames that already exist
+%   .compile_first: force the one-time job-binary compile described below.
+%     Default true. A script calling this once per spreadsheet should set it
+%     true only for the first call, or it compiles once per spreadsheet.
 % param_override: standard override struct, usually carrying .cluster
 %
 % OUTPUTS
@@ -94,14 +97,17 @@ run_mvdr = any(strcmpi({products.method},'mvdr'));
 % newer than the binary. A binary compiled earlier without
 % delay_doppler_task (for example by a sar run after pulling opr_ndh) is
 % therefore reused as-is, and every delay-Doppler task fails with
-% "Undefined function 'delay_doppler_task'". One forced compile here, with
-% the task in the list, prevents that; the batches built below then find
-% the binary up to date and do not compile again.
+% "Undefined function 'delay_doppler_task'". One forced compile, with the
+% task in the list, prevents that; batches built afterwards find the binary
+% up to date and do not compile again. It is needed once per run, not once
+% per call, so callers looping over spreadsheets pass compile_first only on
+% the first.
 cluster_type = '';
 if isfield(param_override.cluster,'type') && ~isempty(param_override.cluster.type)
   cluster_type = param_override.cluster.type;
 end
-if strcmpi(cfg.dd_mode,'cluster') && cfg.run_delay_doppler_en ...
+compile_first = ~isfield(cfg,'compile_first') || isempty(cfg.compile_first) || cfg.compile_first;
+if compile_first && strcmpi(cfg.dd_mode,'cluster') && cfg.run_delay_doppler_en ...
     && any(strcmpi(cluster_type,{'slurm','torque'}))
   fprintf('Compiling the cluster job binary with delay_doppler_task included (%s)\n', datestr(now));
   cluster_compile({'delay_doppler_task.m','array_task.m','array_combine_task.m'}, ...

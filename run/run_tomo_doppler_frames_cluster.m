@@ -134,6 +134,9 @@ end
 if ~check_only_en
   ctrl_chain = {};
   for job_idx = 1:length(params_list)
+    % Force the job-binary compile only for the first spreadsheet; batches
+    % for later spreadsheets find the binary up to date
+    cfg.compile_first = (job_idx == 1);
     chains = delay_doppler_tomo(params_list{job_idx},cfg,param_override);
     ctrl_chain = [ctrl_chain chains]; %#ok<AGROW>
   end
