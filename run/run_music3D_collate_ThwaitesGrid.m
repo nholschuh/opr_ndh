@@ -42,7 +42,7 @@
 %
 % Author: Nick Holschuh
 %
-% See also: run_sar_tomo_doppler_frames, master, array, tomo.run_collate, tomo.collate,
+% See also: run_sar_tomo_doppler_frames, select_day_seg_frms, master, array, tomo.run_collate, tomo.collate,
 %   tomo.add_dem_icemask, tomo.track_surface, run_surfdata_to_DEM
 
 %% User Settings
@@ -83,14 +83,22 @@ surf_out_path = 'surfData_ndh';
 %% Segments
 % =========================================================================
 params = read_param_xls(opr_filename_param('rds_param_2009_Antarctica_TO.xlsx'),'','post');
-params = opr_set_params(params,'cmd.generic',0);
-params = opr_set_params(params,'cmd.generic',1,'day_seg', ...
-  '20100101_02|20100103_01|20100103_02|20100104_01|20100112_01|20100112_02');
-params = opr_set_params(params,'cmd.frms',[]);   % all frames in each segment
+% Exactly these segments, all frames of each; every other segment is disabled
+params = select_day_seg_frms(params,{'20100101_02','20100103_01','20100103_02', ...
+  '20100104_01','20100112_01','20100112_02'});
 
-% Print the GPS time offset each segment will use (see header)
+% master runs sar/array on any segment whose cmd.sar/cmd.array is set, without
+% checking cmd.generic, so switch the stages on only for the enabled segments
+% and off everywhere else (records and qlook too, so no spreadsheet flag starts
+% work on another segment)
 for param_idx = 1:length(params)
-  if opr_generic_en(params(param_idx))
+  seg_en = opr_generic_en(params(param_idx));
+  params(param_idx).cmd.records = 0;
+  params(param_idx).cmd.qlook = 0;
+  params(param_idx).cmd.sar = double(run_sar && seg_en);
+  params(param_idx).cmd.array = double(run_array && seg_en);
+  if seg_en
+    % Print the GPS time offset each segment will use (see header)
     fprintf('%s  gps.time_offset = %g s\n',params(param_idx).day_seg,params(param_idx).records.gps.time_offset);
   end
 end
@@ -99,13 +107,11 @@ end
 % =========================================================================
 % sar: spreadsheet settings (fk, sigma_x 2.5, both waveform images); only the
 % output directory is set here
-params = opr_set_params(params,'cmd.sar',double(run_sar));
 params = opr_set_params(params,'sar.out_path',sar_out_path);
 % Keep sar_coord.mat beside the SAR chunks, where array looks for it
 params = opr_set_params(params,'sar.coord_path',sar_out_path);
 
 % array: 3D MUSIC with the look-direction axis kept
-params = opr_set_params(params,'cmd.array',double(run_array));
 params = opr_set_params(params,'array.in_path',sar_out_path);
 params = opr_set_params(params,'array.out_path',array_out_path);
 params = opr_set_params(params,'array.method','music');
