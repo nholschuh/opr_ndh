@@ -71,6 +71,16 @@ run_sar = true;
 run_array = true;
 run_collate = true;
 
+% Download the REMA tiles collate needs, once and serially, before the cluster
+% job. tomo.add_dem_icemask asks dem_class for a 10 m surface DEM, which wgets
+% REMA v2.0 tiles into <gis_path>/antarctica/DEM/REMA and untars them. Frames
+% share tiles, so parallel tasks race: one untars an archive another is still
+% downloading and the task dies in untar ("An internal error has occurred" in
+% matlab.io.internal.archive.core.builtin.extractArchive). Pre-fetching here
+% leaves every tile on disk before the tasks start. Safe to leave true: tiles
+% already downloaded are skipped.
+prefetch_dem = true;
+
 % Submit and wait. Set false to only build and save the chains.
 run_chain_en = true;
 
@@ -195,6 +205,29 @@ if run_sar || run_array
     ctrl_chain = cluster_run(ctrl_chain);
   else
     fprintf('Chain saved (id %d): %s\nRun it later with cluster_load_chain and cluster_run.\n', chain_id, chain_fn);
+  end
+end
+
+%% Pre-fetch the surface DEM tiles (serial, before any collate task)
+if run_collate && prefetch_dem
+  physical_constants;   % WGS84
+  global gdem;
+  if isempty(gdem) || ~isa(gdem,'dem_class') || ~isvalid(gdem)
+    gdem = dem_class(merge_structs(params(first_idx),param_override),10);
+  end
+  gdem.set_res(10);
+  for param_idx = 1:length(params)
+    param = merge_structs(params(param_idx),param_override);
+    if ~opr_generic_en(param)
+      continue;
+    end
+    records = records_load(param);
+    dec_idxs = round(linspace(1,length(records.lat),min(length(records.lat),2000)));
+    [latb,lonb] = bufferm(records.lat(dec_idxs),records.lon(dec_idxs), ...
+      param.tomo_collate.dem_guard/WGS84.semimajor*180/pi);
+    fprintf('Pre-fetching surface DEM tiles for %s (%s)\n',param.day_seg,datestr(now));
+    gdem.set_vector(latb,lonb,sprintf('prefetch:%s',param.day_seg));
+    gdem.get_vector_mosaic(100);
   end
 end
 
