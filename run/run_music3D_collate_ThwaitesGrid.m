@@ -6,14 +6,24 @@
 % profiles (49_GHOST/Airborne_GroundBased_Comparison).
 %
 % Stages (each switched on below):
-%   1. sar          per-channel SAR images, rerun into CSARP_sar_ndh (the input
+%   1. qlook        unfocused echograms (CSARP_qlook_ndh) and, from them, the
+%                   2D surface layer that collate needs (written to CSARP_layer_ndh)
+%   2. sar          per-channel SAR images, rerun into CSARP_sar_ndh (the input
 %                   array reads, via array.in_path)
-%   2. array        3D MUSIC images (Tomo.img, Nsv look directions), written as
+%   3. array        3D MUSIC images (Tomo.img, Nsv look directions), written as
 %                   Data_img_01/Data_img_02 in CSARP_music3D_ndh -- with tomo_en
 %                   on, array does not combine images (array_combine_task.m:78)
-%   3. tomo.collate fuse the two waveform images vertically, attach the surface
+%   4. tomo.collate fuse the two waveform images vertically, attach the surface
 %                   DEM and ice mask, and track the ice bottom (TRW-S), writing
 %                   surfData to CSARP_surfData_ndh
+%
+% LAYERS. tomo.track_surface loads a 2D surface AND a 2D bottom layer
+% (tomo_collate.layer_params) and seeds the nadir column of the tracked
+% surfaces with them; it errors out if either is missing for a frame. qlook
+% produces the surface. The bottom has to come from picking: either copy the
+% existing 2D bottom picks into this run's layer directory (copy_bottom_source
+% below) or track them with run_layer_tracker before collate. The check before
+% the collate section stops the run if either layer is missing.
 %
 % Segments and frames (all frames of each segment; 87 frames total):
 %   20100101_02 001-018   20100103_01 001-016   20100103_02 001-018
@@ -37,12 +47,13 @@
 % nadir picks. Confirm the offset when recreating records, before this script.
 %
 % Requires: records and frames files for each segment (recreate those first if
-% the GPS offset changes), and gRadar set up by your OPR startup on the machine
-% that holds the data.
+% the GPS offset changes), a 2D bottom layer (see LAYERS above), and gRadar set
+% up by your OPR startup on the machine that holds the data.
 %
 % Author: Nick Holschuh
 %
-% See also: run_sar_tomo_doppler_frames, select_day_seg_frms, master, array, tomo.run_collate, tomo.collate,
+% See also: run_sar_tomo_doppler_frames, select_day_seg_frms, master, qlook, array, tomo.run_collate, tomo.collate,
+%   opsCopyLayers, run_layer_tracker,
 %   tomo.add_dem_icemask, tomo.track_surface, run_surfdata_to_DEM
 
 %% User Settings
@@ -67,9 +78,21 @@ param_override.cluster.max_mem_mode = 'truncate';
 param_override.cluster.max_cpu_time_mode = 'truncate';
 
 % Which stages to run
+run_qlook = true;
 run_sar = true;
 run_array = true;
 run_collate = true;
+
+% Layer directory this run reads and writes (CSARP_<layer_path>). Kept separate
+% so the rerun does not overwrite the layers of the existing processing.
+layer_path = 'layer_ndh';
+
+% Copy the existing 2D bottom picks into layer_path before collate, from this
+% layerdata directory ('' to skip, e.g. when tracking them instead). Picks are
+% matched by GPS time, so if the new records use a different gps.time_offset
+% than the run these picks came from, they will land in the wrong place --
+% check the offset first (see the header).
+copy_bottom_source = 'layer';
 
 % Download the REMA tiles collate needs, once and serially, before the cluster
 % job. tomo.add_dem_icemask asks dem_class for a 10 m surface DEM, which wgets
@@ -86,6 +109,7 @@ run_chain_en = true;
 
 % Output product directories (CSARP_<name>); distinct names so nothing posted
 % as a 2D product is overwritten
+qlook_out_path = 'qlook_ndh';
 sar_out_path = 'sar_ndh';
 array_out_path = 'music3D_ndh';
 surf_out_path = 'surfData_ndh';
@@ -104,7 +128,7 @@ params = select_day_seg_frms(params,{'20100101_02','20100103_01','20100103_02', 
 for param_idx = 1:length(params)
   seg_en = opr_generic_en(params(param_idx));
   params(param_idx).cmd.records = 0;
-  params(param_idx).cmd.qlook = 0;
+  params(param_idx).cmd.qlook = double(run_qlook && seg_en);
   params(param_idx).cmd.sar = double(run_sar && seg_en);
   params(param_idx).cmd.array = double(run_array && seg_en);
   if seg_en
@@ -113,8 +137,14 @@ for param_idx = 1:length(params)
   end
 end
 
-%% SAR and array settings
+%% qlook, SAR and array settings
 % =========================================================================
+% qlook: spreadsheet settings; the surface it tracks is copied to layer_path,
+% which is where collate reads the 2D surface from
+params = opr_set_params(params,'qlook.out_path',qlook_out_path);
+params = opr_set_params(params,'qlook.surf_layer',struct('name','surface', ...
+  'source','layerData','layerdata_source',layer_path,'existence_check',false));
+
 % sar: spreadsheet settings (fk, sigma_x 2.5, both waveform images); only the
 % output directory is set here
 params = opr_set_params(params,'sar.out_path',sar_out_path);
@@ -168,9 +198,10 @@ tomo_collate.ground_based_flag = false;
 tomo_collate.bounds_relative = [3 2 0 0];
 
 % .layer_params: 2D layers used to seed the tracker (surface first, then bottom)
-tomo_collate.layer_params = struct('name','surface','source','layerdata');
+tomo_collate.layer_params = struct('name','surface','source','layerdata','layerdata_source',layer_path);
 tomo_collate.layer_params(2).name = 'bottom';
 tomo_collate.layer_params(2).source = 'layerdata';
+tomo_collate.layer_params(2).layerdata_source = layer_path;
 
 % .surfData_mode: fresh surfData files
 tomo_collate.surfData_mode = 'overwrite';
@@ -196,8 +227,8 @@ else
   param_override = gRadar;
 end
 
-%% SAR -> array (one chain from master)
-if run_sar || run_array
+%% qlook -> SAR -> array (one chain from master)
+if run_qlook || run_sar || run_array
   ctrl_chain = master(params,param_override);
   cluster_print_chain(ctrl_chain);
   [chain_fn,chain_id] = cluster_save_chain(ctrl_chain);
@@ -205,6 +236,60 @@ if run_sar || run_array
     ctrl_chain = cluster_run(ctrl_chain);
   else
     fprintf('Chain saved (id %d): %s\nRun it later with cluster_load_chain and cluster_run.\n', chain_id, chain_fn);
+  end
+end
+
+%% Layers collate needs: copy the existing bottom picks, then check both layers
+if run_collate && ~isempty(copy_bottom_source)
+  for param_idx = 1:length(params)
+    param = merge_structs(params(param_idx),param_override);
+    if ~opr_generic_en(param)
+      continue;
+    end
+    copy_param = [];
+    copy_param.layer_source.name = 'bottom';
+    copy_param.layer_source.source = 'layerdata';
+    copy_param.layer_source.layerdata_source = copy_bottom_source;
+    copy_param.layer_source.existence_check = false;
+    copy_param.layer_dest.name = 'bottom';
+    copy_param.layer_dest.source = 'layerdata';
+    copy_param.layer_dest.layerdata_source = layer_path;
+    copy_param.layer_dest.existence_check = false;
+    copy_param.copy_method = 'overwrite';
+    copy_param.gaps_fill.method = 'preserve_gaps';
+    fprintf('Copying bottom picks %s: CSARP_%s -> CSARP_%s (%s)\n', ...
+      param.day_seg,copy_bottom_source,layer_path,datestr(now));
+    opsCopyLayers(param,copy_param);
+  end
+end
+
+if run_collate
+  % track_surface errors out mid-task if either layer is missing, so check here
+  for param_idx = 1:length(params)
+    param = merge_structs(params(param_idx),param_override);
+    if ~opr_generic_en(param)
+      continue;
+    end
+    chk_param = param;
+    if isempty(chk_param.cmd.frms)
+      chk_param.cmd.frms = 1;
+    else
+      chk_param.cmd.frms = chk_param.cmd.frms(1);
+    end
+    try
+      layers = opsLoadLayers(chk_param,param.tomo_collate.layer_params);
+    catch ME
+      error('%s: could not read the surface/bottom layers from CSARP_%s (%s). Run qlook for the surface and copy or track the bottom picks first.', ...
+        param.day_seg,layer_path,ME.message);
+    end
+    for lay_idx = 1:length(layers)
+      if ~any(isfinite(layers(lay_idx).twtt))
+        error('%s: layer "%s" has no finite twtt in CSARP_%s. %s', param.day_seg, ...
+          param.tomo_collate.layer_params(lay_idx).name,layer_path, ...
+          'The surface comes from qlook; the bottom must be copied (copy_bottom_source) or tracked (run_layer_tracker).');
+      end
+    end
+    fprintf('%s: surface and bottom layers present in CSARP_%s\n',param.day_seg,layer_path);
   end
 end
 
