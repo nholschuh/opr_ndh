@@ -34,6 +34,13 @@ names still have to be unique across the whole path.
 | `processing/delay_doppler_tomo_check.m` | Runs the acceptance checks on every listed frame |
 | `processing/run_delay_doppler_tomo.m` | **Local** run script: delay-Doppler in this session, 3D products through `array` |
 | `processing/run_delay_doppler_tomo_cluster.m` | **Cluster** run script: takes day_seg / day_seg_frame lists and farms out every product |
+| `processing/delay_doppler_collate.m` | The delay-Doppler counterpart of `tomo.collate`: builds one `delay_doppler_collate_task` per frame |
+| `processing/delay_doppler_collate_task.m` | Cluster task: fuses the waveform images, then predicts and tracks the ice surface and bed in every Doppler bin |
+| `processing/delay_doppler_fuse.m` | Vertical image fuse for the delay-Doppler product, ported from `tomo.fuse_images` (same `img_comb` rule) |
+| `processing/tomo_doppler_collate.m` | Shared engine: `tomo.collate` on each of the three 3D products plus `delay_doppler_collate`, with a layer preflight and DEM pre-fetch |
+| `processing/tomo_doppler_collate_check.m` | Checks that the collated 3D set still shares Time and GPS_time, and that the delay-Doppler surfaces sit on the same traces |
+| `run/run_tomo_doppler_frames_collate.m` | Step 3 for the frames in `tomo_doppler_frames_list`: runs the two collates above on the cluster |
+| `utility/dd_ray_twtt.m` | Ray casting in the flight-line plane: surface and bed travel time for each Doppler look direction, from the along-track 2D picks |
 | `utility/select_day_seg_frms.m` | Enables exactly the segments and frames named in a `YYYYMMDD_SS` / `YYYYMMDD_SS_FFF` list |
 | `utility/opr_filename_param.m` | Override of the toolbox function: looks for parameter spreadsheets in `gRadar.param_path_ndh` before `gRadar.param_path` |
 | `utility/tomo_set_check.m` | Acceptance checks for one frame of a standard/MVDR/MUSIC 3D set: Nsv, method, shared grids, MVDR covariance support and positivity, MUSIC floor, and trace alignment with 2D products |
@@ -44,6 +51,18 @@ directories are `standard3D_ndh`, `mvdr3D_ndh` and `music3D_ndh`. Never give one
 method name as its `out_path`, or it overwrites the posted 2D product of that name. MVDR
 also needs `param.array.DCM` set wide enough for its covariance to invert; the run script
 refuses to start otherwise.
+
+**What a delay-Doppler "surface" is.** `Doppler.theta` is the along-track squint, orthogonal
+to the cross-track DOA axis of `Tomo`, so `tomo.add_dem_icemask`'s DEM ray-cast does not
+apply. `delay_doppler_collate` instead casts each Doppler look direction (squint plus the
+platform climb over the aperture) in the vertical plane of the flight line, against the
+along-track surface and bed profiles built from the 2D picks of the frame and its neighbours,
+with refraction at the surface. That gives an Ndop by Nx travel-time grid for each interface,
+the same shape as the Nsv by Nx grids `tomo.track_surface` works on, and TRW-S
+(`tomo.trws2`) then tracks each interface within a window of the prediction. The output
+records where every ray met the bed, so returns from one bed point seen at different angles
+from different traces can be gathered. The prediction is the leading edge from the flight-line
+plane; energy from the rest of each iso-Doppler cone arrives later.
 
 Run `along_track_sampling` on a season before `delay_doppler`. It reports the raw
 along-track spacing, which sets how much angle span the delay-Doppler product can reach:
