@@ -38,6 +38,7 @@ names still have to be unique across the whole path.
 | `processing/delay_doppler_collate_task.m` | Cluster task: fuses the waveform images, then predicts and tracks the ice surface and bed in every Doppler bin |
 | `processing/delay_doppler_fuse.m` | Vertical image fuse for the delay-Doppler product, ported from `tomo.fuse_images` (same `img_comb` rule) |
 | `processing/tomo_doppler_collate.m` | Shared engine: `tomo.collate` on each of the three 3D products plus `delay_doppler_collate`, with a layer preflight and DEM pre-fetch |
+| `processing/tomo_collate_batch.m` | Builds the same batch as `tomo.collate` for any array method; upstream stops on standard/MVDR products (and in rerun_only mode) |
 | `processing/tomo_doppler_collate_check.m` | Checks that the collated 3D set still shares Time and GPS_time, and that the delay-Doppler surfaces sit on the same traces |
 | `run/run_tomo_doppler_frames_collate.m` | Step 3 for the frames in `tomo_doppler_frames_list`: runs the two collates above on the cluster |
 | `utility/dd_ray_twtt.m` | Ray casting in the flight-line plane: surface and bed travel time for each Doppler look direction, from the along-track 2D picks |

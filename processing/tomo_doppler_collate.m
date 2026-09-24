@@ -28,10 +28,11 @@ function ctrl_chain = tomo_doppler_collate(params,cfg,param_override)
 %  - The fused cube goes to Data_YYYYMMDD_SS_FFF.mat in the product's own
 %    directory, and surfData to the product's own surf_out_path.
 %
-% rerun_only: upstream tomo.collate references an undefined variable
-% (combine_file_success) whenever a frame still needs processing in
-% rerun_only mode. This function instead drops frames whose outputs exist
-% from cmd.frms itself and calls tomo.collate with rerun_only off.
+% The batches are built by tomo_collate_batch, not tomo.collate: upstream
+% tomo.collate stops on standard and MVDR products (it only sizes MUSIC and
+% MLE, and its warning for anything else errors in newer MATLAB) and breaks
+% in rerun_only mode. The tasks are upstream's tomo_collate_task either way.
+% Frames whose outputs exist are also dropped here in rerun_only mode.
 %
 % INPUTS
 % =========================================================================
@@ -58,7 +59,7 @@ function ctrl_chain = tomo_doppler_collate(params,cfg,param_override)
 % Author: Nick Holschuh
 %
 % See also: run_tomo_doppler_frames_collate, tomo_doppler_collate_check,
-%   delay_doppler_collate, tomo.collate, delay_doppler_tomo
+%   tomo_collate_batch, delay_doppler_collate, tomo.collate, delay_doppler_tomo
 
 %% Input checks
 % =========================================================================
@@ -241,9 +242,9 @@ for param_idx = 1:length(params)
     po = param_override;
     po.cluster.rerun_only = false;
     po.tomo_collate = tc;
-    fprintf('  Queue tomo.collate CSARP_%s -> CSARP_%s, %d images, frames %s\n', ...
+    fprintf('  Queue tomo_collate_batch CSARP_%s -> CSARP_%s, %d images, frames %s\n', ...
       prod.out_path, prod.surf_out_path, Nimg, mat2str(todo));
-    ctrl_chain{end+1} = tomo.collate(cparam,po); %#ok<AGROW>
+    ctrl_chain{end+1} = tomo_collate_batch(cparam,po); %#ok<AGROW>
   end
 
   %% 4. delay_doppler_collate
