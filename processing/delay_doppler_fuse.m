@@ -10,12 +10,18 @@ function mdata = delay_doppler_fuse(param)
 % image N. The same img_comb therefore puts the seam in the same place in
 % the delay-Doppler product as in the three 3D products.
 %
-% Data and Theta are recomputed from the fused cube (peak over Doppler and
-% the angle at that peak), as delay_doppler does, rather than fused
-% separately.
+% Each image is first resampled onto dd_collate.Nsv look directions
+% (dd_resample_angle), the grid the 3D array products use, so the fuse and
+% everything after it work on Nsv angle bins rather than the native
+% Doppler bins.
 %
-% With a single image there is nothing to fuse: the one file is loaded and
-% returned unchanged, and nothing is written.
+% Data and Theta are recomputed from the fused, resampled cube (peak over
+% angle and the angle at that peak), as delay_doppler does, rather than
+% fused separately.
+%
+% With a single image there is nothing to fuse: the one file is loaded,
+% resampled, and returned, and nothing is written (the input file would be
+% the output file).
 %
 % param: parameter spreadsheet struct for the segment, merged with gRadar
 %  .load.frm: frame to fuse
@@ -28,6 +34,8 @@ function mdata = delay_doppler_fuse(param)
 %   .img_comb_trim: [top trim, bottom trim, absolute top, absolute bottom]
 %     (s). Empty uses tomo.fuse_images' default: half the first image's
 %     pulse off the top and half the last image's pulse off the bottom
+%   .Nsv: look directions to resample to; empty or 0 keeps the native
+%     Doppler bins
 %   .save_fused: write the fused cube to Data_YYYYMMDD_SS_FFF.mat in
 %     in_path, beside the image files, as tomo.fuse_images does
 %
@@ -43,21 +51,27 @@ dc = param.dd_collate;
 in_dir = opr_filename_out(param,dc.in_path,'');
 imgs = dc.imgs;
 
+Nsv = [];
+if isfield(dc,'Nsv')
+  Nsv = dc.Nsv;
+end
+
 if isequal(imgs,0)
-  fn = fullfile(in_dir,sprintf('Data_%s_%03d.mat',param.day_seg,param.load.frm));
-  fprintf('  Loading %s (%s)\n', fn, datestr(now));
-  mdata = load(fn);
-  return;
+  fns = {fullfile(in_dir,sprintf('Data_%s_%03d.mat',param.day_seg,param.load.frm))};
+else
+  fns = cell(1,numel(imgs));
+  for v_img = 1:numel(imgs)
+    fns{v_img} = fullfile(in_dir,sprintf('Data_img_%02d_%s_%03d.mat',imgs(v_img),param.day_seg,param.load.frm));
+  end
 end
 
-fns = cell(1,numel(imgs));
-for v_img = 1:numel(imgs)
-  fns{v_img} = fullfile(in_dir,sprintf('Data_img_%02d_%s_%03d.mat',imgs(v_img),param.day_seg,param.load.frm));
-end
-
-if numel(imgs) == 1
+if numel(fns) == 1
   fprintf('  Loading %s (%s)\n', fns{1}, datestr(now));
   mdata = load(fns{1});
+  if ~isempty(Nsv) && Nsv > 0
+    mdata.Doppler = dd_resample_angle(mdata.Doppler,Nsv);
+    [mdata.Data,mdata.Theta] = peak_over_angle(mdata.Doppler);
+  end
   return;
 end
 
@@ -90,6 +104,7 @@ for v_img = 1:numel(imgs)
   fprintf('  Loading %s (%s)\n', fns{v_img}, datestr(now));
   if v_img == 1
     mdata = load(fns{1});
+    mdata.Doppler = dd_resample_angle(mdata.Doppler,Nsv);
     Time = mdata.Time(:);
     Img = mdata.Doppler.img;
     dt = Time(2)-Time(1);
@@ -106,6 +121,7 @@ for v_img = 1:numel(imgs)
   end
 
   new = load(fns{v_img},'Doppler','Time','Surface');
+  new.Doppler = dd_resample_angle(new.Doppler,Nsv);
   new_time = new.Time(:);
   new_img = new.Doppler.img;
   new.Doppler.img = [];
@@ -164,14 +180,7 @@ end
 mdata.Time = Time;
 mdata.Doppler.img = Img;
 clear Img;
-if isreal(mdata.Doppler.img)
-  [pk,pk_idx] = max(mdata.Doppler.img,[],2);
-else
-  % complex_en: blended as voltage, peak taken on power as delay_doppler does
-  [pk,pk_idx] = max(abs(mdata.Doppler.img).^2,[],2);
-end
-mdata.Data = reshape(pk,size(mdata.Doppler.img,1),size(mdata.Doppler.img,3));
-mdata.Theta = reshape(mdata.Doppler.theta(pk_idx),size(mdata.Doppler.img,1),size(mdata.Doppler.img,3));
+[mdata.Data,mdata.Theta] = peak_over_angle(mdata.Doppler);
 mdata.Doppler.fused_imgs = imgs;
 mdata.Doppler.img_comb = dc.img_comb;
 mdata.Doppler.img_comb_trim = img_comb_trim;
@@ -185,4 +194,20 @@ if dc.save_fused
   end
   fprintf('  Saving %s (%s)\n', out_fn, datestr(now));
   opr_save(out_fn,'-struct','mdata');
+  info = dir(out_fn);
+  fprintf('  Fused cube %s: %.2f GB on disk\n', mat2str(size(mdata.Doppler.img)), info.bytes/1e9);
+end
+
+end
+
+function [Data,Theta] = peak_over_angle(Doppler)
+% 2D echogram and the angle of its peak, as delay_doppler forms them
+if isreal(Doppler.img)
+  [pk,pk_idx] = max(Doppler.img,[],2);
+else
+  % complex_en: blended as voltage, peak taken on power as delay_doppler does
+  [pk,pk_idx] = max(abs(Doppler.img).^2,[],2);
+end
+Data = reshape(pk,size(Doppler.img,1),size(Doppler.img,3));
+Theta = reshape(Doppler.theta(pk_idx),size(Doppler.img,1),size(Doppler.img,3));
 end

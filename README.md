@@ -41,6 +41,7 @@ names still have to be unique across the whole path.
 | `processing/tomo_collate_batch.m` | Builds the same batch as `tomo.collate` for any array method; upstream stops on standard/MVDR products (and in rerun_only mode) |
 | `processing/tomo_doppler_collate_check.m` | Checks that the collated 3D set still shares Time and GPS_time, and that the delay-Doppler surfaces sit on the same traces |
 | `run/run_tomo_doppler_frames_collate.m` | Step 3 for the frames in `tomo_doppler_frames_list`: runs the two collates above on the cluster |
+| `utility/dd_resample_angle.m` | Averages the native Doppler bins (linear power) onto the Nsv look directions of the 3D array products |
 | `utility/dd_ray_twtt.m` | Ray casting in the flight-line plane: surface and bed travel time for each Doppler look direction, from the along-track 2D picks |
 | `utility/select_day_seg_frms.m` | Enables exactly the segments and frames named in a `YYYYMMDD_SS` / `YYYYMMDD_SS_FFF` list |
 | `utility/opr_filename_param.m` | Override of the toolbox function: looks for parameter spreadsheets in `gRadar.param_path_ndh` before `gRadar.param_path` |

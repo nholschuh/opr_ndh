@@ -100,6 +100,9 @@ cfg.dd_collate = [];
 cfg.dd_collate.in_path = 'delay_doppler';     % cfg.dd.out_path in the cluster script
 cfg.dd_collate.surf_out_path = 'dd_surf_ndh';
 cfg.dd_collate.save_fused = true;
+% Angle bins: the native Doppler axis averaged onto the same Nsv look
+% directions as the 3D products (cfg.shared.Nsv in the cluster script)
+cfg.dd_collate.Nsv = 64;
 cfg.dd_collate.top.method = 'trws';
 cfg.dd_collate.bottom.method = 'trws';
 

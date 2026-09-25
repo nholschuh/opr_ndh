@@ -31,6 +31,9 @@ function ctrl_chain = delay_doppler_collate(param,param_override)
 %   .img_comb: [] uses the spreadsheet's array.img_comb, so the seam sits
 %     where it does in the 2D and 3D products
 %   .img_comb_trim: [] for tomo.fuse_images' default
+%   .Nsv: resample the Doppler axis onto this many look directions, the
+%     grid the 3D array products use (dd_resample_angle), before fusing
+%     and tracking. [] or 0 keeps the native Doppler bins [64]
 %   .save_fused: write the fused cube beside the image files [true]
 %   .layer_params: opsLoadLayers struct array, surface first then bottom
 %     [layerdata 'surface' and 'bottom' from CSARP_layer]
@@ -90,6 +93,9 @@ if isempty(dc.img_comb) && isfield(param,'array') && isfield(param.array,'img_co
 end
 dc = set_default(dc,'img_comb_trim',[]);
 dc = set_default(dc,'save_fused',true);
+if ~isfield(dc,'Nsv')
+  dc.Nsv = 64;
+end
 if ~isfield(dc,'layer_params') || isempty(dc.layer_params)
   dc.layer_params = struct('name',{'surface','bottom'},'source','layerdata', ...
     'layerdata_source','layer');
@@ -200,38 +206,44 @@ for frm_idx = 1:length(param.cmd.frms)
   end
 
   % Size from the input cubes without loading them
-  cube_bytes = 0;
+  img_bytes = zeros(1,length(in_fns));
   for fn_idx = 1:length(in_fns)
     info = whos('-file',in_fns{fn_idx},'Doppler');
-    cube_bytes = cube_bytes + info.bytes;
+    img_bytes(fn_idx) = info.bytes;
   end
+  cube_bytes = sum(img_bytes);
   hdr = load(in_fns{1},'GPS_time','Time');
   Nx = numel(hdr.GPS_time);
-  n_el = cube_bytes/4;
-  Ndop = n_el/(numel(hdr.Time)*Nx*numel(in_fns));
+  Nt = numel(hdr.Time);
+  Ndop = cube_bytes/4/(Nt*Nx*numel(in_fns));
+  % Angle bins every later step works on
+  Nang = Ndop;
+  if ~isempty(dc.Nsv) && dc.Nsv > 0
+    Nang = min(Ndop,dc.Nsv);
+  end
+  small_bytes = cube_bytes*Nang/Ndop;
 
-  % Memory: during the fuse, the stack so far, the next image and the new
-  % stack; during tracking, the fused cube plus a dB copy and a window mask
-  % of the cropped part
-  dparam.mem = 1.5e9 + 3.5*cube_bytes;
+  % Memory: one native image while it is resampled, then the fuse holds
+  % the stack so far, the next image and the new stack, all resampled
+  dparam.mem = 1.5e9 + 1.2*max(img_bytes) + 3.5*small_bytes;
   % Time, from benchmarks of each step: reading the image files and
-  % writing the fused cube (about 100 MB/s each way), the per-trace fuse,
-  % the ray cast (about 0.15 s per trace per 1000 Doppler bins), and TRW-S
-  % at about 2.5e-7 s per cell per loop on the flattened window of each
-  % interface (2*window/dt+1 rows by Ndop by Nx)
+  % writing the fused cube (about 100 MB/s each way), the resampling and
+  % per-trace fuse, the ray cast (about 0.15 s per trace per 1000 angle
+  % bins), and TRW-S at about 2.5e-7 s per cell per loop on the flattened
+  % window of each interface (2*window/dt+1 rows by Nang by Nx)
   dt = hdr.Time(2)-hdr.Time(1);
   io_time = cube_bytes/1e8;
   if numel(in_fns) > 1 && dc.save_fused
-    io_time = 2*io_time;
+    io_time = io_time + small_bytes/1e8;
   end
   trws_cells = 0;
   for surf_name = {'top','bottom'}
     trk = dc.(surf_name{1});
     if strcmpi(trk.method,'trws')
-      trws_cells = trws_cells + Ndop*Nx*(2*ceil(trk.window/dt)+1)*double(trk.max_loops);
+      trws_cells = trws_cells + Nang*Nx*(2*ceil(trk.window/dt)+1)*double(trk.max_loops);
     end
   end
-  dparam.cpu_time = 300 + io_time + n_el*2e-8 + Nx*Ndop*1.5e-4 + trws_cells*2.5e-7;
+  dparam.cpu_time = 300 + io_time + cube_bytes/4*2e-8 + Nx*Nang*1.5e-4 + trws_cells*2.5e-7;
 
   ctrl = cluster_new_task(ctrl,sparam,dparam,'dparam_save',0);
 end

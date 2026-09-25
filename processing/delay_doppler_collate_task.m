@@ -5,7 +5,10 @@ function success = delay_doppler_collate_task(param)
 % product, from the per-image files to tracked ice-surface and ice-bed
 % returns in every Doppler bin.
 %
-%  1. Fuse the waveform images vertically (delay_doppler_fuse).
+%  1. Resample each waveform image onto dd_collate.Nsv look directions
+%     (the 3D products' grid) and fuse them vertically (delay_doppler_fuse).
+%     Everything below works on those angle bins, so "Doppler bin" means
+%     one of the Nsv bins.
 %  2. Build the along-track surface and bed profiles, in the vertical plane
 %     of the flight line, from the 2D surface and bottom picks of this
 %     frame and its neighbours.
