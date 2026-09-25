@@ -214,12 +214,24 @@ for frm_idx = 1:length(param.cmd.frms)
   % stack; during tracking, the fused cube plus a dB copy and a window mask
   % of the cropped part
   dparam.mem = 1.5e9 + 3.5*cube_bytes;
-  % Time: the per-trace fuse, the ray cast (air and ice) against about
-  % 2000 profile vertices per trace, and two TRW-S runs over at most the
-  % whole cube
-  max_loops = max(dc.top.max_loops,dc.bottom.max_loops);
-  dparam.cpu_time = 300 + n_el*2e-8 + 2*Nx*Ndop*2000*2e-8 ...
-    + 2*n_el*double(max_loops)*1e-8;
+  % Time, from benchmarks of each step: reading the image files and
+  % writing the fused cube (about 100 MB/s each way), the per-trace fuse,
+  % the ray cast (about 0.15 s per trace per 1000 Doppler bins), and TRW-S
+  % at about 2.5e-7 s per cell per loop on the flattened window of each
+  % interface (2*window/dt+1 rows by Ndop by Nx)
+  dt = hdr.Time(2)-hdr.Time(1);
+  io_time = cube_bytes/1e8;
+  if numel(in_fns) > 1 && dc.save_fused
+    io_time = 2*io_time;
+  end
+  trws_cells = 0;
+  for surf_name = {'top','bottom'}
+    trk = dc.(surf_name{1});
+    if strcmpi(trk.method,'trws')
+      trws_cells = trws_cells + Ndop*Nx*(2*ceil(trk.window/dt)+1)*double(trk.max_loops);
+    end
+  end
+  dparam.cpu_time = 300 + io_time + n_el*2e-8 + Nx*Ndop*1.5e-4 + trws_cells*2.5e-7;
 
   ctrl = cluster_new_task(ctrl,sparam,dparam,'dparam_save',0);
 end

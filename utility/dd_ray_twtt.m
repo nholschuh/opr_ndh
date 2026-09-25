@@ -32,8 +32,9 @@ function geom = dd_ray_twtt(x0,z0,phi,surf_x,surf_z,bed_x,bed_z,er_ice,slope_len
 % er_ice: relative permittivity of ice (e.g. 3.15)
 % slope_len: along-track length (m) over which each profile is smoothed
 %   before its slope is taken for refraction and incidence
-% r_max: longest range (m) searched in air and, separately, in ice.
-%   Vertices farther than this along track from the ray origin are ignored.
+% r_max: longest one-way air-equivalent range (m), c/2 times the last
+%   fast-time sample. The air leg searches out to r_max, the ice leg only
+%   as far as the remaining time allows, (r_max - r_air)/sqrt(er_ice).
 %
 % OUTPUTS
 % =========================================================================
@@ -103,7 +104,9 @@ for rline = 1:Nx
   phi_ice(good) = alpha_s + asin(sin(inc)/n_ice);
 
   %% Ice: surface to bed
-  [r_ice,bhit_x,bhit_z] = first_hit(hit_x,hit_z,phi_ice,bed_x,bed_z,r_max);
+  % Only the record time left after the air leg can be spent in the ice
+  r_ice_max = (r_max - min(r_air(good)))/n_ice;
+  [r_ice,bhit_x,bhit_z] = first_hit(hit_x,hit_z,phi_ice,bed_x,bed_z,r_ice_max);
   bgood = isfinite(r_ice);
   if ~any(bgood)
     continue;

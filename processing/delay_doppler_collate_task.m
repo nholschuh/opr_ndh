@@ -224,6 +224,15 @@ function [twtt,power,pred_power] = track_dd(img,Time,pred_twtt,nadir_col,trk,abo
 % below above_twtt when given.
 %   trk.method: 'trws' (tomo.trws2), 'max' (peak in each window), or
 %     'none' (prediction only)
+%
+% The tracker never sees the full fast-time axis. Each column is
+% flattened on its own prediction: row k of the tracked image is range bin
+% round(pred_bin) + k - half - 1, so the image is 2*half+1 rows deep
+% rather than Nt, and TRW-S costs scale with the window, not the record.
+% In this frame the prediction has already absorbed the platform motion
+% and the angle moveout, so the expected along-track and across-Doppler
+% slopes are zero. Doppler bins with no prediction anywhere in the frame
+% (grazing rays that never reach the interface) are left out.
 
 [Nt,Ndop,Nx] = size(img);
 dt = Time(2)-Time(1);
@@ -236,61 +245,48 @@ if strcmpi(trk.method,'none') || all(isnan(pred_bin(:)))
   return;
 end
 
-% Search window per Doppler bin and trace
-half = ceil(trk.window/dt)*ones(Ndop,Nx);
-half(sub2ind([Ndop Nx],nadir_col,1:Nx)) = ceil(trk.nadir_window/dt);
-lo = ceil(pred_bin - half);
-hi = floor(pred_bin + half);
+% Flattened window, per Doppler bin and trace
+half = ceil(trk.window/dt);
+half_col = half*ones(Ndop,Nx);
+half_col(sub2ind([Ndop Nx],nadir_col,1:Nx)) = min(half,ceil(trk.nadir_window/dt));
+ctr = round(pred_bin);
 if ~isempty(above_twtt)
-  lo = max(lo,floor(interp1(Time,1:Nt,above_twtt,'linear',0))+1);
+  above_bin = floor(interp1(Time,1:Nt,above_twtt,'linear',0));
+  above_bin(isnan(above_bin)) = 0;
+else
+  above_bin = zeros(Ndop,Nx);
 end
-lo = max(lo,1);
-hi = min(hi,Nt);
-bad = ~isfinite(pred_bin) | hi < lo;
-if all(bad(:))
-  return;
+cols = find(any(isfinite(ctr),2));
+Ncol = numel(cols);
+offs = (-half:half).';
+Nw = numel(offs);
+
+data = -inf(Nw,Ncol,Nx,'single');
+for rline = 1:Nx
+  bins = bsxfun(@plus,offs,ctr(cols,rline).');
+  ok = bins >= 1 & bins <= Nt & bsxfun(@le,abs(offs),half_col(cols,rline).') ...
+    & bsxfun(@gt,bins,above_bin(cols,rline).');
+  lin = bins + Nt*(repmat(cols(:).',Nw,1)-1) + Nt*Ndop*(rline-1);
+  vals = nan(Nw,Ncol,'single');
+  vals(ok) = img(lin(ok));
+  vals = 10*log10(vals);
+  vals(~isfinite(vals)) = -inf;
+  data(:,:,rline) = vals;
 end
 
-% Crop fast time to the union of the windows
-r1 = min(lo(~bad));
-r2 = max(hi(~bad));
-data = single(10*log10(img(r1:r2,:,:)));
-bins = (r1:r2).';
-in_win = bsxfun(@ge,bins,reshape(lo,[1 Ndop Nx])) & bsxfun(@le,bins,reshape(hi,[1 Ndop Nx]));
-in_win(:,bad) = false;
-data(~in_win) = -inf;
-clear in_win;
+bad_column = reshape(all(~isfinite(data),1),[Ncol Nx]);
+if all(bad_column(:))
+  return;
+end
 
 switch lower(trk.method)
   case 'max'
     [~,idx] = max(data,[],1);
-    result = reshape(idx,[Ndop Nx]) + r1 - 1;
+    result = reshape(idx,[Ncol Nx]);
 
   case 'trws'
-    % Expected change in range bin from one trace to the next (along
-    % track, taken at nadir) and from one Doppler bin to the next (across
-    % the angle axis), both from the prediction. These play the parts of
-    % at_slope and ct_slope in tomo.track_surface.
-    nad_bin = pred_bin(sub2ind([Ndop Nx],nadir_col,1:Nx));
-    at_slope = single(interp_finite([diff(nad_bin) 0],0));
-    ct_slope = [diff(pred_bin,1,1); nan(1,Nx)];
-    ct_slope = single(interp_finite(ct_slope,0));
-    ct_weight = 1./(3+mean(abs(ct_slope),2));
-    ct_weight = single(trk.ct_weight*ct_weight./max(ct_weight));
-
-    lo_c = lo - r1 + 1;
-    hi_c = hi - r1 + 1;
-    lo_c(bad) = inf;
-    hi_c(bad) = -inf;
-    bounds = [min(lo_c,[],1); max(hi_c,[],1)];
-    empty_rline = ~isfinite(bounds(1,:));
-    bounds(1,empty_rline) = 1;
-    bounds(2,empty_rline) = size(data,1);
-    bounds = uint32(bounds);
-
-    % As tomo.track_surface: columns with nothing in bounds get a constant
+    % As tomo.track_surface: columns with nothing usable get a constant
     % value, everything else outside the windows a value far below the data
-    bad_column = reshape(all(~isfinite(data),1),[Ndop Nx]);
     finite_vals = data(isfinite(data));
     data_min = min(finite_vals);
     data_mean = mean(finite_vals);
@@ -299,18 +295,27 @@ switch lower(trk.method)
     data(:,bad_column) = data_mean;
     data(~isfinite(data)) = data_min - (data_max-data_min)*20;
 
+    at_slope = zeros(1,Nx,'single');
+    ct_slope = zeros(Ncol,Nx,'single');
+    ct_weight = single(trk.ct_weight)*ones(Ncol,1,'single');
+    bounds = uint32([zeros(1,Nx); (Nw-1)*ones(1,Nx)]);   % 0-based, as trws2 takes them
     result = tomo.trws2(data,at_slope,single(trk.at_weight),ct_slope,ct_weight, ...
-      uint32(trk.max_loops),bounds-1);
-    result = double(reshape(result,[Ndop Nx])) + r1 - 1;
-    result(bad_column) = NaN;
+      uint32(trk.max_loops),bounds);
+    result = double(reshape(result,[Ncol Nx]));
 
   otherwise
     error('Tracking method must be ''trws'', ''max'' or ''none'', not ''%s''.', trk.method);
 end
-result(bad) = NaN;
+clear data;
+result(bad_column) = NaN;
 
-twtt = interp1(1:Nt,Time,result);
-power = sample_cube(img,result);
+% Back from window row to range bin
+bin = nan(Ndop,Nx);
+bin(cols,:) = ctr(cols,:) + result - half - 1;
+bin(~isfinite(ctr)) = NaN;
+
+twtt = interp1(1:Nt,Time,bin);
+power = sample_cube(img,bin);
 end
 
 function vals = sample_cube(img,bin)
